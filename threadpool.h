@@ -42,7 +42,7 @@ typedef struct _threadpool_st {
 // variable of type "dispatch_fn" points to a function
 // with the following signature:
 //
-//     int dispatch_function(void *arg);
+ //int dispatch_function(void *arg);
 
 typedef int (*dispatch_fn)(void *);
 
