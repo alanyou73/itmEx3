@@ -15,17 +15,18 @@
 
 typedef struct response
 {
-   char * date;
-   int contentLength;
-   char* responseMsg;
-   char *typefile;
-   char* location;
-
+    char * date;
+    int contentLength;
+    char* responseMsg;
+    char** filesNames;
+    char *typefile;
+    char* location;
+    int filesCount;
+    int statusCode;
 
 }response;
 
 response *h;
-
 
 response *init()
 {
@@ -33,8 +34,11 @@ response *init()
     r->date=NULL;
     r->contentLength=0;
     r->responseMsg=NULL;
+    r->filesNames=NULL;
     r->typefile=NULL;
     r->location=NULL;
+    r->statusCode = 0;
+    r->filesCount = 0;
    return r;
 }
 char* statusCode(int status);
@@ -49,10 +53,13 @@ char* responseMsg(char *status , char*date );
 int main (int argc , char ** argv)
 {
 
+    int count=0;
+    int numOfRequest=atoi(argv[3]);
     threadpool *tpool=create_threadpool(atoi(argv[2]));
     int sockfd, newsockfd, portno, clilen;
 
     struct sockaddr_in serv_addr, cli_addr;
+  //  printf("/nIM LONG AS %d/n",strlen("<tr><td><A HREF=""><entity-name (file or sub-directory)></A></td><td><modification time></td><td><if entity is a file, add file size, otherwise, leave empty></td></tr>"));
 
     if(argc!=4)
     {
@@ -77,14 +84,18 @@ int main (int argc , char ** argv)
 
     listen(sockfd, 5);
     clilen = sizeof(cli_addr);
-    while(1)
+    while(count<numOfRequest)
     {
         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
         printf("GOT from PORT");
         dispatch(tpool, handleRequest, newsockfd);
+        count++;
+        printf("%d\n",count);
     }
 
-    close(newsockfd);
+    printf("number of request exeded\n");
+    close(sockfd);
+    destroy_threadpool(tpool);
     return 0;
 }
 
@@ -102,28 +113,48 @@ char* getDate()
 }
 void checkDir(char* path)
 {
-    DIR* dir = NULL;
+    DIR *d;
+    struct dirent *dir;
     if(path[strlen(path)-1] == ' ')
     {
         path[strlen(path)-1] = 0;
     }
-    dir = opendir(path);
-    if (dir)
+    d = opendir(path);
+    if (d)
     {
         //printf("%c",path[strlen(path)-1]);
         if(path[strlen(path)-1] != '/')
         {
             h->location=path;
-            statusCode(302);
-
+            h->statusCode=302;
         }
         else
         {
-            printf("dir exist");
+
+            while ((dir = readdir(d)) != NULL)
+            {
+                if(strcmp(dir->d_name,"index.html")==0)
+                {
+
+                }
+                else if(strcmp(dir->d_name,"..") != 0 && strcmp(dir->d_name,".") != 0)
+                {
+//                    h->responseBody=(response*)realloc()
+//                    dir->name
+                    h->filesCount++;
+                    h->filesNames = (char**) realloc(h->filesNames, sizeof(char*) * (h->filesCount));
+                    h->filesNames[h->filesCount-1] = (char*) malloc(sizeof(char) * (strlen(dir->d_name) + 1));
+                    strcpy(h->filesNames[h->filesCount-1], dir->d_name);
+                }
+
+            }
+            printf("%s",&h->filesNames[0][0]);
+            printf("%s",&h->filesNames[0][1]);
+            closedir(d);
         }
 
-        closedir(dir);
     }
+
     else
     {
         printf("404");
@@ -137,7 +168,7 @@ void error(char *msg)
     exit(1);
 }
 
-char* getString() {
+/*char* getString() {
     return "HTTP/1.0 200 OK\n"
            "Server: webserver/1.0\n"
            "Date: Fri, 05 Nov 2010 06:53:58 GMT\n"
@@ -165,7 +196,7 @@ char* getString() {
            "<HR>\n"
            "<ADDRESS>webserver/1.0</ADDRESS>\n"
            "</BODY></HTML>";
-}
+}*/
 char *get_mime_type(char *name) {
     char *ext = strrchr(name, '.');
     if (!ext) return NULL;
@@ -189,7 +220,7 @@ int handleRequest(int socket)
 
     char* req = NULL;
     char *line;
-    char* method;
+    char *method = NULL;
     char* path;
     char* http;
     int i=0;
@@ -198,48 +229,57 @@ int handleRequest(int socket)
 
     if (socket < 0)
         error("ERROR on accept");
-    write(socket,getString(),strlen(getString()));
 
-    while(n = read(socket, buffer, 255) != 0)
+    while(1)
     {
+        n = read(socket, buffer, 255);
+        printf("this is n %d", n);
 
+        if(!n) {
+            break;
+        }
         length = req ? strlen(req) : 0;
         req=(char*)realloc(req, sizeof(char)*(strlen(buffer)+length+1));
 
         req = strcat(req, buffer);
+        if(n < 255) break;
         if (n < 0) error("ERROR reading from socket");
         bzero(buffer, 256);
+       // printf("HI :)");
     }
 
+    //write(socket,getString(),strlen(getString()));
 
     length = strchr(req, '\r')-req;
     line = (char*) malloc(sizeof(char)*(length+1)); //freeIt
     line = strncat(line, req, length);
-    path = strchr(line,'/');
+    path = strchr(line,' ');
     *path = 0;
-    path++;
+    path+=2;
 
     http = path+strlen(path)-8;
     if(*http != 'H')
     {
-        statusCode(400);
+        h->statusCode = 400;
     }// all good
     *http = 0;
     http++;
     http = strchr(http,'/');
     http++;
-    if(strcmp(http,"1.1")!=0)
+    if(h->statusCode != 0 && strcmp(http,"1.1")!=0)
     {
-        statusCode(400);
+        h->statusCode = 400;
     }
 
-    if(strcmp(line,"GET")!=0)
+    if(h->statusCode != 0 && strcmp(line,"GET")!=0)
     {
-        statusCode(501);
+        h->statusCode = 501;
     }
 
-    checkDir(path);
-
+    if(h->statusCode == 0)
+    {
+       checkDir(path);
+    }
    /* method = (char*) malloc(sizeof(char)*(strlen(line))+1);
     path=(char*) malloc(sizeof(char)*(strlen(line))+1);
     http=(char*) malloc(sizeof(char)*(strlen(line))+1);
@@ -256,7 +296,7 @@ int handleRequest(int socket)
 
 
 
-    while(token!=NULL)
+    /*while(token!=NULL)
     {
         if(i==0)
         {
@@ -275,14 +315,11 @@ int handleRequest(int socket)
             strcpy(http, token);
             token = strtok(NULL, s);
         }
-    }
+    }*/
 
-
-
-
-       if(method!=NULL && path!=NULL && http!=NULL)
+     /*  if(line!=NULL && path!=NULL && http!=NULL)
        {
-        if(strcmp(http,"HTTP/1.0")!=0)
+        if(strcmp(http,"1.1")!=0)
         {
             statusCode(400);
         }
@@ -292,16 +329,19 @@ int handleRequest(int socket)
         statusCode(400);
         }
 
-        if(strcmp(method,"GET")!=0)
+        if(strcmp(line,"GET")!=0)
         {
             statusCode(501);
         }
-        checkDir(path);
-
+        checkDir(path);*/
+   // checkDir(path);
 
     // TODO check the path if exists and respon ddue to it.
     printf("Here is the message: %s\n", buffer);
-    n = write(socket, "I got your message", 18);
+    //n = write(socket, "I got your message", 18);
+//    write(socket,responseMsg(),strlen(getString()));
+    close(socket);
+
     if (n < 0) error("ERROR writing to socket");
 
 }
