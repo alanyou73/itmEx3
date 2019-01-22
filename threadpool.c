@@ -66,7 +66,7 @@ void* do_work(void* p)
             pthread_mutex_unlock(&(tpool->qlock));
             return NULL;
         }
-       // printf("IM HERE AT 69 DEADPOOL");
+        // printf("IM HERE AT 69 DEADPOOL");
 //}     // After wake up and locking mutex again start to pull work from queue.
         work_t *first=tpool->qhead;
 
@@ -112,7 +112,7 @@ void dispatch(threadpool* from_me, dispatch_fn dispatch_to_here, void *arg)
     work->routine=dispatch_to_here;
     work->next=NULL;
 
-   // pthread_mutex_lock(&(from_me->qlock)); // Lock so no can do any thing to the queue when we add new job.
+    // pthread_mutex_lock(&(from_me->qlock)); // Lock so no can do any thing to the queue when we add new job.
     if(from_me->dont_accept==1)
     {
         free(work);
@@ -132,7 +132,7 @@ void dispatch(threadpool* from_me, dispatch_fn dispatch_to_here, void *arg)
     from_me->qtail=work;
 
     from_me->qsize++;
-  //  pthread_mutex_unlock(&(from_me->qlock));
+    //  pthread_mutex_unlock(&(from_me->qlock));
     pthread_cond_signal(&(from_me->q_not_empty));
 }
 
@@ -176,26 +176,21 @@ int func(void* toPrint1)
 
 /*int main(int argc, char const *argv[])
 {
-
 if (argc < 3)
 {
 printf("put 2 arguments!\n");
 exit(1);
 }
-
 int jobs =atoi(argv[1]);
 int threads =atoi(argv[2]);
 int* arr = (int*)malloc(jobs*sizeof(int));
 for (int i = 0; i < jobs; i++)
 arr[i] = i;
-
 threadpool* tp = create_threadpool(threads);
 for (int i = 0; i < jobs; i++)
 {
 dispatch(tp, func, &arr[i]);
-
 }
-
 destroy_threadpool(tp);
 free(arr);
 return (0);
