@@ -9,6 +9,7 @@
 #include <asm/errno.h>
 #include <errno.h>
 #include <time.h>
+#include <sys/stat.h>
 
 #define RFC1123FMT "%a, %d %b %Y %H:%M:%S GMT"
 #define USAGE "server <port> <pool-size> <max-number-of-request>"
@@ -27,6 +28,8 @@ typedef struct response
     int filesCount;
     int statusCode;
     int fileFound;
+    size_t bodySize;
+    FILE *file;
 
 }response;
 
@@ -42,25 +45,33 @@ response *init()
     r->statusCode = 0;
     r->filesCount = 0;
     r->fileFound = 0;
+    r->file=NULL;
+    r->bodySize = 0;
     return r;
 }
-char* createResponse();
+char* buidTable(response *h);
 char* statusCode(int status);
 char* getDate();
-int checkDir(response *h);
+int checkDir(response *h,int sock);
 void error(char *msg);
 int get_mime_type(char *name);
 int handleRequest(int socket);
-char* responseMsg(response *h);
+char* responseMsg(response *h, int socket);
 char* getStatusMsg(int status);
 int getLength();
 void getLocation();
 char* buildErrorMessage(response* h);
-char* buildSuccessMessage(response* h);
-void getFileContent(response* h);
+char* buildSuccessMessage(response* h, int socket);
+void getFileContent(response* h,int sock);
+void responseMessage(response* h,int sock);
+char* printRows(response *h, int socket);
+char* lastTimeModified(response *h , char *path);
+int getFileSize(response *h , char *name);
+char* getContentType(int type);
 
 int main (int argc , char ** argv)
 {
+
 
     int count=0;
     int numOfRequest=atoi(argv[3]);
@@ -119,7 +130,7 @@ char* getDate()
     return timebuf;
 }
 
-int checkDir(response *h)
+int checkDir(response *h, int sock)
 {
 
     DIR *d;
@@ -130,6 +141,7 @@ int checkDir(response *h)
     {
         h->path[strlen(h->path)-1] = 0;
     }
+
     d = opendir(h->path);
     if (d)
     {
@@ -150,44 +162,108 @@ int checkDir(response *h)
                     temp = strcpy(temp, h->path);
                     temp = strcat(temp, "index.html/");
                     h->path = temp;
-                    getFileContent(h);
-                } else if (strcmp(dir->d_name, "..") != 0 && strcmp(dir->d_name, ".") != 0) {
-                    h->filesCount++;
-                    h->filesNames = (char **) realloc(h->filesNames, sizeof(char *) * (h->filesCount));
-                    h->filesNames[h->filesCount - 1] = (char *) malloc(sizeof(char) * (strlen(dir->d_name) + 1));
-                    strcpy(h->filesNames[h->filesCount - 1], dir->d_name);
+                    getFileContent(h,sock);
                 }
             }
         }
+
 
         closedir(d);
     }
 
     else
     {
-        getFileContent(h);
+        getFileContent(h,sock);
     }
 }
 
-void getFileContent(response* h)
+void getFileContent(response* h,int sock)
 {
-    FILE* file;
-    char buffer[500] = ""; // TODO!!!! CHeck if it falls on another compiler
+    FILE* file = NULL;
+    size_t size = 1;
+    char get_char = 0;
+     char buffer[512] = ""; // TODO!!!! CHeck if it falls on another compiler
     h->fileFound = 1; // Index found - rise flag
     h->typefile = get_mime_type(h->path);
-
-    file=fopen(h->path, (strcmp(h->typefile, "HTML") == 0 || strcmp(h->typefile, "CSS") == 0) ? "r" : "rb");
-    if(index==NULL)
+    puts((h->typefile == HTML ||h->typefile == CSS) ?"r":"rb");
+    file=fopen(h->path, (h->typefile == HTML ||h->typefile == CSS) ?"r":"rb");
+    if(file==NULL)
     {
         h->statusCode = 404;
         return; // stands for ERROR
     }
 
-    while(fgets(buffer, 500, file) != NULL)
-    {
-        h->body = (char*) realloc(h->body, sizeof(char) * (strlen(buffer)+(h->body == NULL ? 0 : strlen(h->body))));
+    h->statusCode = 200;
+//    fseek(file, 0, SEEK_SET );
+//
+//    do {
+//        get_char = fgetc(file);
+//        if( feof(file) ) {
+//            break ;
+//        }
+//        size++;
+//        h->body = (char*) realloc(h->body, sizeof(char) * (size));
+//        h->body[size-2] = get_char;
+//        printf("%c", c);
+//    } while(1);
+//    while((get_char=fgetc(file))!= EOF)
+//    {
+//        size++;
+//        h->body = (char*) realloc(h->body, sizeof(char) * (size));
+//        h->body[size-2] = get_char;
+//    }
+//    h->body[size-1] = 0;
+
+    struct stat buf;
+    stat(h->path, &buf);
+    h->bodySize = buf.st_size;
+
+//    h->bodySize = size;
+
+
+//    fseek(file, 0, SEEK_END);
+//    size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+//    printf("%d, and %d \n", ftell(file), ftell(file));
+//    h->body = (char*)malloc(sizeof(char)*(500));
+//    sprintf(h->body, "HTTP/1.0 %s\r\n"
+//                     "Server: webserver/1.0\r\n"
+//                     "Date: %s\r\n"
+//                     "Content-Type: %s\r\n"
+//                     "Content-Length: %d\r\n"
+//                     "Last-Modified: Wed, 27 Oct 2010 06:50:29 GMT"
+//                     "Connection: close\r\n"
+//                     "\n", statusCode(h->statusCode), getDate(),
+//            getContentType(h->typefile), strlen(bodyList));
+    h->body = (char*) malloc(sizeof(char) * (h->bodySize + 501));
+    sprintf(h->body, "HTTP/1.0 %s\r\n"
+                     "Server: webserver/1.0\r\n"
+                     "Date: %s\r\n"
+                     "Content-Type: %s\r\n"
+                     "Content-Length: %d\r\n"
+                     "Last-Modified: %s"
+                     "Connection: close\r\n"
+                     "\n", statusCode(h->statusCode), getDate(),
+            getContentType(h->typefile), h->bodySize, lastTimeModified(h, h->path));
+
+//    fread(h->body,h->bodySize+1, 1, file);
+//    fgets(h->body, size+1, file);
+
+//
+     while(fgets(buffer, 512, file) != NULL)
+     {
+
+
+        fread(buffer,512, 1, file);
+
+//     write(sock,&buffer,strlen(buffer));
+//     write(sock,buffer,512);
+//        h->body = (char*) realloc(h->body, sizeof(char) * (strlen(buffer)+strlen(h->body)));
         strcat(h->body, buffer);
     }
+    puts("image is: %s\n");
+    puts(h->body);
+    fclose(file);
 
 }
 
@@ -286,7 +362,6 @@ int handleRequest(int socket)
     char *token;
 
     response* h = init();
-
     if (socket < 0)
         error("ERROR on accept");
 
@@ -300,8 +375,8 @@ int handleRequest(int socket)
         }
         length = req ? strlen(req) : 0;
         req=(char*)realloc(req, sizeof(char)*(strlen(buffer)+length+1));
-
         req = strcat(req, buffer);
+
         if(n < 255) break;
         if (n < 0) error("ERROR reading from socket");
         bzero(buffer, 256);
@@ -331,21 +406,22 @@ int handleRequest(int socket)
         h->statusCode = 400;
     }
 
-    if(h->statusCode != 0 && strcmp(line,"GET")!=0)
+    if( strcmp(line,"GET")!=0)
     {
         h->statusCode = 501;
     }
 
     if(h->statusCode == 0)
     {
-        checkDir(h);
+        checkDir(h,socket);
     }
 
     // TODO check the path if exists and respon ddue to it.
     printf("Here is the message: %s\n", buffer);
     //n = write(socket, "I got your message", 18);
-    char* msg = responseMsg(h);
+    char* msg = responseMsg(h, socket);
     write(socket,msg,strlen(msg));
+//    responseMessage(h, socket);
     close(socket);
 
     if (n < 0) error("ERROR writing to socket");
@@ -353,9 +429,12 @@ int handleRequest(int socket)
 
 }
 
-char* responseMsg(response *h )
+void responseMessage(response* h, int socket)
+{}
+
+char* responseMsg(response *h, int socket )
 {
-    return h->statusCode == 200 ? buildSuccessMessage(h) : buildErrorMessage(h);
+    return h->statusCode == 200 ? buildSuccessMessage(h, socket) : buildErrorMessage(h);
 //}
 //    if(h->statusCode!=200) {
 //        return buildErrorMessage(h);
@@ -386,67 +465,113 @@ char* buildErrorMessage(response* h)
     return arr;
 }
 
-char* buildSuccessMessage(response* h)
+char* buildSuccessMessage(response* h, int socket)
 {
     //int bodyLen = 0;
     char* arr = NULL;
     struct dirent *dir;
+    char* wrapper;
     //(char*)malloc(sizeof(char)*(bodyLen+500));
-    if(h->fileFound)
+
+    if(!h->fileFound)
     {
-        int bodyLen = (strlen(h->body));
-        char* arr= (char*)malloc(sizeof(char)*(bodyLen+500));
-        sprintf(arr, "HTTP/1.0 %s\r\n"
-                     "Server: webserver/1.0\r\n"
-                     "Date:%s\r\n"
-                     "Content-Type:%s\r\n"
-                     "Content-Length: %d\r\n"
-                     "Connection: close\r\n"
-                     "\n"
-                     "%s", statusCode(h->statusCode), getDate(),
-                getContentType(h->typefile), bodyLen, h->body);
+//         ;
+
+        arr = printRows(h, socket);
         return arr;
     }
+    return h->body;
 
 
-//        printf("%s",&h->filesNames[0][0]);
-//        printf("%s",&h->filesNames[0][1]);
-//    "<HTML>\n"
-//    "<HEAD><TITLE>Index of <path-of-directory></TITLE></HEAD>\n"
-//    "\n"
-//    "<BODY>\n"
-//    "<H4>Index of <path-of-directory></H4>\n"
-//    "\n"
-//    "<table CELLSPACING=8>\n"
-//    "<tr><th>Name</th><th>Last Modified</th><th>Size</th></tr>\n"
-//    "\n"
-//    "\n"
-//    "<!-- for each entity in the path add the following -->\n"
-//    "<tr>\n"
-//    "<td><A HREF=\"<entity-name>\"><entity-name (file or sub-directory)></A></td><td><modification time></td>\n"
-//    "<td><if entity is a file, add file size, otherwise, leave empty></td>\n"
-//    "</tr>\n"
-//    "</table>\n"
-//    "<HR>\n"
-//    "<ADDRESS>webserver/1.0</ADDRESS>\n"
-//    "</BODY></HTML>";
-//
-//    sprintf(arr, "HTTP/1.0 %s\r\n"
-//                 "Server: webserver/1.0\r\n"
-//                 "Date:%s\r\n"
-//                 "%s"
-//                 "Location:%s/"
-//                 "Content-Type:%s\r\n"
-//                 "Content-Length: %d\r\n"
-//                 "Connection: close\r\n"
-//                 "\n"
-//            , statusCode(h->statusCode), getDate(), h->path, statusCode(h->statusCode),
-//            getContentType(h->typefile), bodyLen, statusCode(h->statusCode), statusCode(h->statusCode),
-//            getStatusMsg(h->statusCode));
-//
-//    return arr;
 }
 
+char* printRows(response *h, int socket)
+{
+    DIR *d;
+    struct dirent *dir;
+    char* path = NULL;
+    char * lastModified = NULL;
+    char buffer[1024]="";
+
+    char* bodyList =  (char*)malloc(sizeof(char)*(strlen(h->path)*2+154));
+     sprintf(bodyList,"<HTML>\n"
+                "<HEAD><TITLE>Index of %s</TITLE></HEAD>\n"
+                "\n"
+                "<BODY>\n"
+                "<H4>Index of %s</H4>\n"
+                "\n"
+                "<table CELLSPACING=8>\n"
+                "<tr><th>Name</th><th>Last Modified</th><th>Size</th></tr>\n"
+                "\n"
+                "\n", h->path, h->path);
+    d = opendir(h->path);
+    while ((dir = readdir(d)) != NULL) {
+        if (strcmp(dir->d_name, "..") != 0 && strcmp(dir->d_name, ".") != 0) {
+//            h->filesCount++;
+//            h->filesNames = (char **) realloc(h->filesNames, sizeof(char *) * (h->filesCount));
+//            h->filesNames[h->filesCount - 1] = (char *) malloc(sizeof(char) * (strlen(dir->d_name) + 1));
+//            strcpy(h->filesNames[h->filesCount - 1], dir->d_name);
+            bzero(buffer,1024);
+            path = (char*) malloc(sizeof(char) * (strlen(dir->d_name)+strlen(h->path) + 1));
+
+            path = strcpy(path, h->path);
+            path = strcat(path, dir->d_name);
+            lastModified = lastTimeModified(h, path);
+            sprintf( buffer,"<tr>\n"
+                            "<td><A HREF=\"%s\">%s</A></td><td>%s</td>\n"
+                            "<td>%d</td>\n"
+                            "</tr>\n"
+                            , dir->d_name, dir->d_name, lastModified, getFileSize(h, dir->d_name));
+
+            bodyList=(char*)realloc(bodyList,sizeof(char)*(strlen(bodyList)+strlen(buffer)+1));
+            strcat(bodyList,buffer);
+            free(lastModified);
+            free(path);
+            path=NULL;
+            lastModified = NULL;
+        }
+    }
+    bodyList=(char*)realloc(bodyList,sizeof(char)*strlen(bodyList)+62);
+
+    strcat(bodyList,"</table>\n"
+                    "<HR>\n"
+                    "<ADDRESS>webserver/1.0</ADDRESS>\n"
+                    "</BODY></HTML>");
+
+    h->body = (char*)malloc(sizeof(char)*(500));
+    sprintf(h->body, "HTTP/1.0 %s\r\n"
+                      "Server: webserver/1.0\r\n"
+                      "Date: %s\r\n"
+                      "Content-Type: %s\r\n"
+                      "Content-Length: %d\r\n"
+                      "Last-Modified: Wed, 27 Oct 2010 06:50:29 GMT"
+                      "Connection: close\r\n"
+                      "\n", statusCode(h->statusCode), getDate(),
+            getContentType(h->typefile), strlen(bodyList));
+//    write(socket, h->body, strlen(h->body), )
+    h->body = (char*) realloc(h->body, sizeof(char) * (strlen(h->body) + strlen(bodyList) + 1));
+//
+    h->body = strcat(h->body, bodyList);
+    return h->body;
+
+    //return bodyList;
+
+//     int i = 0;
+//     while(h->filesCount>0)
+//     {
+//        d = opendir(h->path);
+//
+//
+//        sprintf( buffer,"<tr>\n"
+//         "<td><A HREF=\"%s\"><%s></A></td><td>%s></td>\n"
+//         "<td><if entity is a file, add file size, otherwise, leave empty></td>\n"
+//         "</tr>\n"
+//         "</table>\n"
+//         "<HR>\n"
+//         "<ADDRESS>webserver/1.0</ADDRESS>\n"
+//         "</BODY></HTML>",h->filesNames[i],h->filesNames[i]);
+//     }
+}
 
 void getLocation(response *h)
 {
@@ -483,6 +608,10 @@ char* statusCode(int status)
 {
     switch(status)
     {
+        case 200:
+        {
+            return "200 OK";
+        }
         case 302:
         {
             return "302 FOUND";
@@ -550,7 +679,37 @@ char* getStatusMsg(int status)
     }
 }
 
-char* createResponse()
+/*char* createResponse()
 {
 
+}*/
+
+char* lastTimeModified(response *h , char * path) {
+
+    char *res = (char*) malloc(sizeof(char) * 1024);
+    struct stat sb;
+
+    if (stat(path, &sb)!= -1 ) {
+        bzero(res, 128);
+        strftime(res, 128, RFC1123FMT, gmtime(&(sb.st_mtime)));
+    }
+
+    return res;
+}
+
+int getFileSize(response *h , char *name)
+{
+    int size = 0;
+    struct stat sb;
+    char* path = (char*) malloc(sizeof(char) * (strlen(name)+strlen(h->path) + 1));
+    path = strcpy(path, h->path);
+    path = strcat(path, name);
+//    int stat = ;
+//    S_ISREG(path_stat.st_moded)
+    if (stat(path, &sb)!= -1 && S_ISREG(sb.st_mode)) {
+        size = sb.st_size;
+    }
+    free(path);
+    path = NULL;
+    return size;
 }
